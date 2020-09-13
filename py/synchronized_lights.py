@@ -109,47 +109,16 @@ levels = {'DEBUG': log.DEBUG,
           'ERROR': log.ERROR,
           'CRITICAL': log.CRITICAL}
 
-# Arguments
-parser = argparse.ArgumentParser()
-parser.add_argument('--log', default=None,
-                    help='Set the logging level. levels:INFO, DEBUG, WARNING, ERROR, CRITICAL')
-parser.add_argument('--config', default=None, help='Config File Override')
-
-file_group = parser.add_mutually_exclusive_group()
-file_group.add_argument('--playlist', default=None,
-                        help='Playlist to choose song from.')
-file_group.add_argument('--file', help='path to the song to play (required if no '
-                                       'playlist is designated)')
-
-cache_group = parser.add_mutually_exclusive_group()
-cache_group.add_argument('--readcache', type=bool, default=True,
-                         help='read light timing from cache if available. Default: true')
-cache_group.add_argument('--createcache', action="store_true",
-                         help='create light timing cache without audio playback or lightshow.')
-
-if parser.parse_args().createcache:
-    parser.set_defaults(readcache=False)
-
 # Setup log file
 log.basicConfig(filename=LOG_DIR + '/music_and_lights.play.dbg',
                 format='[%(asctime)s] %(levelname)s {%(pathname)s:%(lineno)d} - %(message)s',
                 level=log.INFO)
 
-args = parser.parse_args()
-
 # import hardware_controller
 import hardware_controller
 
-hc = hardware_controller.Hardware(param_config=args.config)
-
-# get copy of configuration manager
-cm = hc.cm
-
-if not args.playlist:
-    args.playlist=cm.lightshow.playlist_path
-
 class Lightshow(object):
-    def __init__(self):
+    def __init__(self, args=None):
         self.stream = None
         self.fm_process = None
         self.streaming = None
@@ -165,65 +134,106 @@ class Lightshow(object):
         self.song_filename = None
         self.terminal = None
 
+        self.configPath = None
+        self.hc = None
+        self.cm = None
+
+        self.readcache = True
+        self.createcache = False
+        self.playlist = None
+        self.filepath = None
+
+        if args:
+            if args.readcache is not None:
+                self.readcache = args.readcache
+            if args.playlist:
+                self.playlist = args.playlist
+            if args.file:
+                self.filepath = args.file
+            if args.createcache is not None:
+                self.createcache = args.createcache
+            
+
         self.output = lambda raw_data: None
 
-        self.mean = np.array([12.0 for _ in range(cm.hardware.gpio_len)], dtype='float32')
-        self.std = np.array([1.5 for _ in range(cm.hardware.gpio_len)], dtype='float32')
+        self.mean = None
+        self.std = None
 
-        self.attenuate_pct = cm.lightshow.attenuate_pct
-        self.sd_low = cm.lightshow.SD_low
-        self.sd_high = cm.lightshow.SD_high
+        self.attenuate_pct = None
+        self.sd_low = None
+        self.sd_high = None
 
-        self.decay_factor = cm.lightshow.decay_factor
-        self.decay = np.zeros(cm.hardware.gpio_len, dtype='float32')
-        self.physical_gpio_len = cm.hardware.physical_gpio_len
-        self.network = hc.network
+        self.decay_factor = None
+        self.decay = None
+        self.physical_gpio_len = None
+        self.network = None
+        self.server = None
+        self.client = None
+
+        self.chunk_size = None
+
+        self.loadHC()
+
+        if __name__ == "__main__":
+            atexit.register(self.exit_function)
+
+        if self.cm.terminal.enabled:
+            self.terminal = bright_curses.BrightCurses(self.cm.terminal)
+            curses.wrapper(self.launch_curses)
+    
+    def loadHC(self):
+        print(self.configPath)
+        self.hc = hardware_controller.Hardware(param_config=self.configPath)
+        self.cm = self.hc.cm
+
+        self.mean = np.array([12.0 for _ in range(self.cm.hardware.gpio_len)], dtype='float32')
+        self.std = np.array([1.5 for _ in range(self.cm.hardware.gpio_len)], dtype='float32')
+
+        self.attenuate_pct = self.cm.lightshow.attenuate_pct
+        self.sd_low = self.cm.lightshow.SD_low
+        self.sd_high = self.cm.lightshow.SD_high
+
+        self.decay_factor = self.cm.lightshow.decay_factor
+        self.decay = np.zeros(self.cm.hardware.gpio_len, dtype='float32')
+        self.physical_gpio_len = self.cm.hardware.physical_gpio_len
+        self.network = self.hc.network
         self.server = self.network.networking == "server" or self.network.networking == "serverjson"
         self.client = self.network.networking == "client"
 
-        if cm.lightshow.use_fifo:
-            if os.path.exists(cm.lightshow.fifo):
-                os.remove(cm.lightshow.fifo)
-            os.mkfifo(cm.lightshow.fifo, 0o777)
+        if self.cm.lightshow.use_fifo:
+            if os.path.exists(self.cm.lightshow.fifo):
+                os.remove(self.cm.lightshow.fifo)
+            os.mkfifo(self.cm.lightshow.fifo, 0o777)
 
-        self.chunk_size = cm.audio_processing.chunk_size  # Use a multiple of 8 
-
-        atexit.register(self.exit_function)
-
-        # Remove traceback on Ctrl-C
-        signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
-        signal.signal(signal.SIGTERM, lambda x, y: sys.exit(0))
-
-        if cm.terminal.enabled:
-            self.terminal = bright_curses.BrightCurses(cm.terminal)
-            curses.wrapper(self.launch_curses)
+        self.chunk_size = self.cm.audio_processing.chunk_size  # Use a multiple of 8 
 
     def exit_function(self):
         """atexit function"""
+        print("exit function ran")
         if self.server:
             self.network.set_playing()
-            self.network.broadcast([0. for _ in range(cm.hardware.gpio_len)])
+            self.network.broadcast([0. for _ in range(self.cm.hardware.gpio_len)])
             time.sleep(1)
             self.network.unset_playing()
 
-        hc.clean_up()
+        self.hc.clean_up()
 
-        if cm.fm.enabled:
+        if self.cm.fm.enabled:
             self.fm_process.kill()
 
         if self.network.network_stream:
             self.network.close_connection()
 
-        if cm.lightshow.mode == 'stream-in':
+        if self.cm.lightshow.mode == 'stream-in':
             try:
                 self.streaming.stdin.write(b"q")
             except IOError:
                 pass
             os.kill(self.streaming.pid, signal.SIGINT)
-            if cm.lightshow.use_fifo:
-                os.unlink(cm.lightshow.fifo)
+            if self.cm.lightshow.use_fifo:
+                os.unlink(self.cm.lightshow.fifo)
 
-        os.system("/bin/echo \"\" >" + cm.home_dir + "/logs/now_playing.txt")
+        os.system("/bin/echo \"\" >" + self.cm.home_dir + "/logs/now_playing.txt")
 
 
     def update_lights(self, matrix):
@@ -271,61 +281,61 @@ class Lightshow(object):
             brightness = np.array([brightness])
 
         for pin in range(len(brightness[:self.physical_gpio_len])):
-            hc.set_light(pin, True, brightness[pin])
+            self.hc.set_light(pin, True, brightness[pin])
 
-        if hc.led:
-            if cm.led.led_channel_configuration == "EXTEND":
+        if self.hc.led:
+            if self.cm.led.led_channel_configuration == "EXTEND":
                 leds = brightness[self.physical_gpio_len:]
             else:
-                leds = brightness[:cm.hardware.gpio_len]
+                leds = brightness[:self.cm.hardware.gpio_len]
 
-            for led_instance in hc.led:
+            for led_instance in self.hc.led:
                 led_instance.write_all(leds)
 
     def set_fm(self):
         pi_version = Platform.pi_version()
         srate = str(int(self.sample_rate / (1 if self.num_channels > 1 else 2)))
 
-        if os.path.exists(cm.fm.fmfifo):
-            os.remove(cm.fm.fmfifo)
-        os.mkfifo(cm.fm.fmfifo, 0o777)
+        if os.path.exists(self.cm.fm.fmfifo):
+            os.remove(self.cm.fm.fmfifo)
+        os.mkfifo(self.cm.fm.fmfifo, 0o777)
 
         fm_command = ["sudo",
-                      cm.home_dir + "/bin/pifm",
+                      self.cm.home_dir + "/bin/pifm",
                       "-",
-                      cm.fm.frequency,
+                      self.cm.fm.frequency,
                       srate,
                       "stereo" if self.num_channels > 1 else "mono"]
 
         if pi_version == 2 or pi_version == 3:
             fm_command = ["sudo",
-                          cm.home_dir + "/bin/pi_fm_rds",
+                          self.cm.home_dir + "/bin/pi_fm_rds",
                           "-audio", "-", "-freq",
-                          cm.fm.frequency,
+                          self.cm.fm.frequency,
                           "-srate",
                           srate,
                           "-ps",
-                          cm.fm.program_service_name,
+                          self.cm.fm.program_service_name,
                           "-rt",
-                          cm.fm.radio_text,
+                          self.cm.fm.radio_text,
                           "-ctl",
-                          cm.fm.fmfifo,
+                          self.cm.fm.fmfifo,
                           "-nochan",
                           "2" if self.num_channels > 1 else "1"]
 
         if pi_version == 4:
             fm_command = ["sudo",
-                          cm.home_dir + "/bin/pi_fm_adv",
+                          self.cm.home_dir + "/bin/pi_fm_adv",
                           "--audio", "-", "--freq",
-                          cm.fm.frequency,
+                          self.cm.fm.frequency,
                           "--srate",
                           srate,
                           "--ps",
-                          cm.fm.program_service_name,
+                          self.cm.fm.program_service_name,
                           "--rt",
-                          cm.fm.radio_text,
+                          self.cm.fm.radio_text,
                           "--ctl",
-                          cm.fm.fmfifo,
+                          self.cm.fm.fmfifo,
                           "--nochan",
                           "2" if self.num_channels > 1 else "1"]
 
@@ -337,11 +347,11 @@ class Lightshow(object):
                                                stdout=dev_null)
         self.output = lambda raw_data: self.fm_process.stdin.write(raw_data)
 
-        fmoutthrps = Thread(target=self.update_fmoutps, args=(cm, cm.fm.program_service_name))
+        fmoutthrps = Thread(target=self.update_fmoutps, args=(self.cm, self.cm.fm.program_service_name))
         fmoutthrps.daemon = True
         fmoutthrps.start()
 
-        fmoutthrrt = Thread(target=self.update_fmoutrt, args=(cm, cm.fm.radio_text))
+        fmoutthrrt = Thread(target=self.update_fmoutrt, args=(self.cm, self.cm.fm.radio_text))
         fmoutthrrt.daemon = True
         fmoutthrrt.start()
 
@@ -349,29 +359,29 @@ class Lightshow(object):
         ps_chunk_array = [ ps[i:i+8] for i in range(0, len(ps), 8) ]
         while True:
             for chunk in ps_chunk_array:
-                os.system("echo PS " + chunk + " > " + cm.fm.fmfifo)
-                time.sleep(float(cm.fm.ps_increment_delay))
+                os.system("echo PS " + chunk + " > " + self.cm.fm.fmfifo)
+                time.sleep(float(self.cm.fm.ps_increment_delay))
 
     def update_fmoutrt(self, cm, rt):
-        nptxt = cm.home_dir + "/logs/now_playing.txt"
+        nptxt = self.cm.home_dir + "/logs/now_playing.txt"
         while True:
             with open(nptxt, 'r') as file:
                 npdata = file.read()
             npdata = npdata.replace("'","")
             npdata = npdata.replace('"',"")
-            os.system("echo RT '" + npdata + "' > " + cm.fm.fmfifo)
-            time.sleep(float(cm.fm.ps_increment_delay))
+            os.system("echo RT '" + npdata + "' > " + self.cm.fm.fmfifo)
+            time.sleep(float(self.cm.fm.ps_increment_delay))
 
     def set_audio_device(self):
 
-        if cm.fm.enabled:
+        if self.cm.fm.enabled:
             self.set_fm()
 
-        elif cm.lightshow.audio_out_card is not '':
-            if cm.lightshow.mode == 'stream-in':
+        elif self.cm.lightshow.audio_out_card is not '':
+            if self.cm.lightshow.mode == 'stream-in':
                 self.num_channels = 2
 
-            output_device = aa.PCM(aa.PCM_PLAYBACK, aa.PCM_NORMAL, cm.lightshow.audio_out_card)
+            output_device = aa.PCM(aa.PCM_PLAYBACK, aa.PCM_NORMAL, self.cm.lightshow.audio_out_card)
             output_device.setchannels(self.num_channels)
             output_device.setrate(self.sample_rate)
             output_device.setformat(aa.PCM_FORMAT_S16_LE)
@@ -383,9 +393,9 @@ class Lightshow(object):
         stream_reader = None
         outq = None
 
-        if cm.lightshow.mode == 'audio-in':
+        if self.cm.lightshow.mode == 'audio-in':
             # Open the input stream from default input device
-            self.streaming = aa.PCM(aa.PCM_CAPTURE, aa.PCM_NORMAL, cm.lightshow.audio_in_card)
+            self.streaming = aa.PCM(aa.PCM_CAPTURE, aa.PCM_NORMAL, self.cm.lightshow.audio_in_card)
             self.streaming.setchannels(self.num_channels)
             self.streaming.setformat(aa.PCM_FORMAT_S16_LE)  # Expose in config if needed
             self.streaming.setrate(self.sample_rate)
@@ -393,21 +403,21 @@ class Lightshow(object):
 
             stream_reader = lambda: self.streaming.read()[-1]
 
-        elif cm.lightshow.mode == 'stream-in':
+        elif self.cm.lightshow.mode == 'stream-in':
 
             outq = Queue()
 
-            if cm.lightshow.use_fifo:
-                self.streaming = subprocess.Popen(cm.lightshow.stream_command_string,
+            if self.cm.lightshow.use_fifo:
+                self.streaming = subprocess.Popen(self.cm.lightshow.stream_command_string,
                                                   stdin=subprocess.PIPE,
                                                   stdout=subprocess.PIPE,
                                                   preexec_fn=os.setsid)
-                io = os.open(cm.lightshow.fifo, os.O_RDONLY | os.O_NONBLOCK)
+                io = os.open(self.cm.lightshow.fifo, os.O_RDONLY | os.O_NONBLOCK)
                 stream_reader = lambda: os.read(io, self.chunk_size)
                 outthr = Thread(target=self.enqueue_output, args=(self.streaming.stdout, outq))
             else:
                 # Open the input stream from command string
-                self.streaming = subprocess.Popen(cm.lightshow.stream_command_string,
+                self.streaming = subprocess.Popen(self.cm.lightshow.stream_command_string,
                                                   stdin=subprocess.PIPE,
                                                   stdout=subprocess.PIPE,
                                                   stderr=subprocess.PIPE)
@@ -422,17 +432,17 @@ class Lightshow(object):
     def audio_in(self):
         """Control the lightshow from audio coming in from a real time audio"""
 
-        self.sample_rate = cm.lightshow.input_sample_rate
-        self.num_channels = cm.lightshow.input_channels
+        self.sample_rate = self.cm.lightshow.input_sample_rate
+        self.num_channels = self.cm.lightshow.input_channels
 
         stream_reader,outq = self.set_audio_source()
 
-        log.debug("Running in %s mode - will run until Ctrl+C is pressed" % cm.lightshow.mode)
-        print("Running in %s mode, use Ctrl+C to stop" % cm.lightshow.mode)
+        log.debug("Running in %s mode - will run until Ctrl+C is pressed" % self.cm.lightshow.mode)
+        print("Running in %s mode, use Ctrl+C to stop" % self.cm.lightshow.mode)
 
         # setup light_delay.
         chunks_per_sec = ((16 * self.num_channels * self.sample_rate) / 8) / self.chunk_size
-        light_delay = int(cm.lightshow.light_delay * chunks_per_sec)
+        light_delay = int(self.cm.lightshow.light_delay * chunks_per_sec)
         matrix_buffer = deque([], 1000)
 
         self.set_audio_device()
@@ -442,19 +452,19 @@ class Lightshow(object):
         # preload running_stats to avoid errors, and give us a show that looks
         # good right from the start
         count = 2
-        running_stats = RunningStats.Stats(cm.hardware.gpio_len)
+        running_stats = RunningStats.Stats(self.cm.hardware.gpio_len)
         running_stats.preload(self.mean, self.std, count)
 
-        hc.initialize()
+        self.hc.initialize()
         fft_calc = fft.FFT(self.chunk_size,
                            self.sample_rate,
-                           cm.hardware.gpio_len,
-                           cm.audio_processing.min_frequency,
-                           cm.audio_processing.max_frequency,
-                           cm.audio_processing.custom_channel_mapping,
-                           cm.audio_processing.custom_channel_frequencies,
+                           self.cm.hardware.gpio_len,
+                           self.cm.audio_processing.min_frequency,
+                           self.cm.audio_processing.max_frequency,
+                           self.cm.audio_processing.custom_channel_mapping,
+                           self.cm.audio_processing.custom_channel_frequencies,
                            1,
-                           cm.audio_processing.use_gpu)
+                           self.cm.audio_processing.use_gpu)
 
         if self.server:
             self.network.set_playing()
@@ -464,23 +474,23 @@ class Lightshow(object):
         # Listen on the audio input device until CTRL-C is pressed
         while True:
 
-            if cm.lightshow.mode == 'stream-in':
+            if self.cm.lightshow.mode == 'stream-in':
                 try:
                     streamout = outq.get_nowait().strip(b'\n\r').decode("utf-8")
                 except Empty:
                     pass
                 else:
                     print(streamout)
-                    if cm.lightshow.stream_song_delim in streamout:
+                    if self.cm.lightshow.stream_song_delim in streamout:
                         songcount+=1
                         streamout = streamout.replace('\033[2K','')
-                        streamout = streamout.replace(cm.lightshow.stream_song_delim,'')
+                        streamout = streamout.replace(self.cm.lightshow.stream_song_delim,'')
                         streamout = streamout.replace('"','')
-                        os.system("/bin/echo " + "Now Playing \"" + streamout + "\"" + " >" + cm.home_dir + "/logs/now_playing.txt")
-                        if cm.lightshow.songname_command:
-                            os.system(cm.lightshow.songname_command + ' "Now Playing ' + streamout + '"')
+                        os.system("/bin/echo " + "Now Playing \"" + streamout + "\"" + " >" + self.cm.home_dir + "/logs/now_playing.txt")
+                        if self.cm.lightshow.songname_command:
+                            os.system(self.cm.lightshow.songname_command + ' "Now Playing ' + streamout + '"')
 
-                    if cm.lightshow.stream_song_exit_count > 0 and songcount > cm.lightshow.stream_song_exit_count:
+                    if self.cm.lightshow.stream_song_exit_count > 0 and songcount > self.cm.lightshow.stream_song_exit_count:
                         break
 
             try:
@@ -500,7 +510,7 @@ class Lightshow(object):
                 audio_max = audioop.max(data, 2)
                 if audio_max < 250:
                     # we will fill the matrix with zeros and turn the lights off
-                    matrix = np.zeros(cm.hardware.gpio_len, dtype="float32")
+                    matrix = np.zeros(self.cm.hardware.gpio_len, dtype="float32")
                     log.debug("below threshold: '" + str(audio_max) + "', turning the lights off")
                 else:
                     matrix = fft_calc.calculate_levels(data)
@@ -572,15 +582,15 @@ class Lightshow(object):
 
                     always_on = "always_on_channels"
                     if config.has_option(lsc, always_on):
-                        cm.lightshow.always_on_channels = map(int, config.get(lsc, always_on).split(","))
+                        self.cm.lightshow.always_on_channels = map(int, config.get(lsc, always_on).split(","))
 
                     always_off = "always_off_channels"
                     if config.has_option(lsc, always_off):
-                        cm.lightshow.always_off_channels = map(int, config.get(lsc, always_off).split(","))
+                        self.cm.lightshow.always_off_channels = map(int, config.get(lsc, always_off).split(","))
 
                     inverted = "invert_channels"
                     if config.has_option(lsc, inverted):
-                        cm.lightshow.inverted_channels = map(int, config.get(lsc, inverted).split(","))
+                        self.cm.lightshow.inverted_channels = map(int, config.get(lsc, inverted).split(","))
 
                     attenuate = "attenuate_pct"
                     if config.has_option(lsc, attenuate):
@@ -611,7 +621,7 @@ class Lightshow(object):
                             if os.path.isfile(preshow_script):
                                 preshow = preshow_script
 
-                        cm.lightshow.preshow = preshow
+                        self.cm.lightshow.preshow = preshow
 
                     # setup postshow
                     has_postshow_configuration = config.has_option(lsc, 'postshow_configuration')
@@ -632,25 +642,25 @@ class Lightshow(object):
                             if os.path.isfile(postshow_script):
                                 postshow = postshow_script
 
-                        cm.lightshow.postshow = postshow
+                        self.cm.lightshow.postshow = postshow
 
                 if config.has_section('custom_audio_processing'):
                     if config.has_option('custom_audio_processing', 'min_frequency'):
-                        cm.audio_processing.min_frequency = \
+                        self.cm.audio_processing.min_frequency = \
                             config.getfloat('custom_audio_processing', 'min_frequency')
 
                     if config.has_option('custom_audio_processing', 'max_frequency'):
-                        cm.audio_processing.max_frequency = \
+                        self.cm.audio_processing.max_frequency = \
                             config.getfloat('custom_audio_processing', 'max_frequency')
 
                     if config.has_option('custom_audio_processing', 'custom_channel_mapping'):
                         temp = config.get('custom_audio_processing', 'custom_channel_mapping')
-                        cm.audio_processing.custom_channel_mapping = \
+                        self.cm.audio_processing.custom_channel_mapping = \
                             map(int, temp.split(',')) if temp else 0
 
                     if config.has_option('custom_audio_processing', 'custom_channel_frequencies'):
                         temp = config.get('custom_audio_processing', 'custom_channel_frequencies')
-                        cm.audio_processing.custom_channel_frequencies = \
+                        self.cm.audio_processing.custom_channel_frequencies = \
                             map(int, temp.split(',')) if temp else 0
 
     def setup_audio(self):
@@ -672,19 +682,19 @@ class Lightshow(object):
 
         self.fft_calc = fft.FFT(self.chunk_size,
                                 self.sample_rate,
-                                cm.hardware.gpio_len,
-                                cm.audio_processing.min_frequency,
-                                cm.audio_processing.max_frequency,
-                                cm.audio_processing.custom_channel_mapping,
-                                cm.audio_processing.custom_channel_frequencies,
+                                self.cm.hardware.gpio_len,
+                                self.cm.audio_processing.min_frequency,
+                                self.cm.audio_processing.max_frequency,
+                                self.cm.audio_processing.custom_channel_mapping,
+                                self.cm.audio_processing.custom_channel_frequencies,
                                 2,
-                                cm.audio_processing.use_gpu)
+                                self.cm.audio_processing.use_gpu)
 
         # setup output device
         self.set_audio_device()
 
         chunks_per_sec = ((16 * self.num_channels * self.sample_rate) / 8) / self.chunk_size
-        self.light_delay = int(cm.lightshow.light_delay * chunks_per_sec)
+        self.light_delay = int(self.cm.lightshow.light_delay * chunks_per_sec)
 
         # Output a bit about what we're about to play to the logs
         num_frames = str(self.music_file.getnframes() / self.sample_rate)
@@ -697,7 +707,7 @@ class Lightshow(object):
         :raise IOError:
         """
         # create empty array for the cache_matrix
-        self.cache_matrix = np.empty(shape=[0, cm.hardware.gpio_len])
+        self.cache_matrix = np.empty(shape=[0, self.cm.hardware.gpio_len])
         self.cache_found = False
 
         # The values 12 and 1.5 are good estimates for first time playing back
@@ -706,14 +716,14 @@ class Lightshow(object):
 
         self.cache_found = self.fft_calc.compare_config(self.cache_filename)
 
-        if args.readcache:
+        if self.readcache:
             # Read in cached fft
             try:
                 # compare configuration of cache file to current configuration
                 self.cache_found = self.fft_calc.compare_config(self.cache_filename)
                 if not self.cache_found:
                     # create empty array for the cache_matrix
-                    self.cache_matrix = np.empty(shape=[0, cm.hardware.gpio_len])
+                    self.cache_matrix = np.empty(shape=[0, self.cm.hardware.gpio_len])
                     raise IOError()
                 else:
                     # load cache from file using numpy loadtxt
@@ -740,10 +750,10 @@ class Lightshow(object):
         Save matrix, std, and mean to cache_filename for use during future playback
         """
         # Compute the standard deviation and mean values for the cache
-        mean = np.empty(cm.hardware.gpio_len, dtype='float32')
-        std = np.empty(cm.hardware.gpio_len, dtype='float32')
+        mean = np.empty(self.cm.hardware.gpio_len, dtype='float32')
+        std = np.empty(self.cm.hardware.gpio_len, dtype='float32')
 
-        for pin in range(0, cm.hardware.gpio_len):
+        for pin in range(0, self.cm.hardware.gpio_len):
             std[pin] = np.std([item for item in self.cache_matrix[:, pin] if item > 0])
             mean[pin] = np.mean([item for item in self.cache_matrix[:, pin] if item > 0])
 
@@ -768,13 +778,13 @@ class Lightshow(object):
         :return: tuple containing 3 strings: song_filename, config_filename, cache_filename
         :rtype: tuple
         """
-        play_now = int(cm.get_state('play_now', "0"))
-        song_to_play = int(cm.get_state('song_to_play', "0"))
-        self.song_filename = args.file
+        play_now = int(self.cm.get_state('play_now', "0"))
+        song_to_play = int(self.cm.get_state('song_to_play', "0"))
+        self.song_filename = self.filepath
 
-        if args.playlist is not None and args.file is None:
+        if self.playlist is not None and self.filepath is None:
             most_votes = [None, None, []]
-            songs = cm.get_playlist(args.playlist)
+            songs = self.cm.get_playlist(self.playlist)
             for song in songs:
                 if len(song[2]) > 0:
                     if len(song[2]) >= len(most_votes[2]):
@@ -790,14 +800,14 @@ class Lightshow(object):
                         song.append("playing!")
 
                 # Update playlist file
-                cm.write_playlist(songs, args.playlist)
+                self.cm.write_playlist(songs, self.playlist)
 
             else:
                 # Get a "play now" requested song
                 if 0 < play_now <= len(songs):
                     current_song = songs[play_now - 1]
                 # Get random song
-                elif cm.lightshow.randomize_playlist:
+                elif self.cm.lightshow.randomize_playlist:
                     current_song = songs[random.randrange(0, len(songs))]
                 # Play next song in the lineup
                 else:
@@ -811,15 +821,15 @@ class Lightshow(object):
                     else:
                         next_song = 0
 
-                    cm.update_state('song_to_play', str(next_song))
+                    self.cm.update_state('song_to_play', str(next_song))
 
             # Get filename to play and store the current song playing in state cfg
             self.song_filename = current_song[1]
-            if (cm.fm.radio_text == "playlist"):
-                cm.fm.radio_text = current_song[0]
-            cm.update_state('current_song', str(songs.index(current_song)))
+            if (self.cm.fm.radio_text == "playlist"):
+                self.cm.fm.radio_text = current_song[0]
+            self.cm.update_state('current_song', str(songs.index(current_song)))
 
-        self.song_filename = self.song_filename.replace("$SYNCHRONIZED_LIGHTS_HOME", cm.home_dir)
+        self.song_filename = self.song_filename.replace("$SYNCHRONIZED_LIGHTS_HOME", self.cm.home_dir)
 
         filename = os.path.abspath(self.song_filename)
         self.config_filename = \
@@ -827,7 +837,7 @@ class Lightshow(object):
         self.cache_filename = \
             os.path.dirname(filename) + "/." + os.path.basename(self.song_filename) + ".sync"
 
-        os.system("/bin/echo \"\" >" + cm.home_dir + "/logs/now_playing.txt")
+        os.system("/bin/echo \"\" >" + self.cm.home_dir + "/logs/now_playing.txt")
         metadata = mutagen.File(self.song_filename, easy=True)
         if not metadata is None:
             if "title" in metadata and "artist" in metadata:
@@ -836,11 +846,11 @@ class Lightshow(object):
                 now_playing = "Now Playing " + metadata["title"][0]
             else:
                 now_playing = "Now Playing Unknown"
-            if cm.lightshow.songname_command:
-                os.system(cm.lightshow.songname_command + " \"" + now_playing + "\"")
+            if self.cm.lightshow.songname_command:
+                os.system(self.cm.lightshow.songname_command + " \"" + now_playing + "\"")
         else:
             now_playing = "Now Playing " + os.path.basename(self.song_filename)
-        os.system("/bin/echo " + " \"" + now_playing + "\"" + " >" + cm.home_dir + "/logs/now_playing.txt")
+        os.system("/bin/echo " + " \"" + now_playing + "\"" + " >" + self.cm.home_dir + "/logs/now_playing.txt")
 
     def play_song(self):
         """Play the next song from the play list (or --file argument)."""
@@ -853,24 +863,24 @@ class Lightshow(object):
 
         # Initialize Lights
         self.network.set_playing()
-        hc.initialize()
+        self.hc.initialize()
 
         # Handle the pre/post show
-        play_now = int(cm.get_state('play_now', "0"))
+        play_now = int(self.cm.get_state('play_now', "0"))
 
         self.network.unset_playing()
 
         if not play_now:
-            result = PrePostShow('preshow', hc).execute()
+            result = PrePostShow('preshow', self.hc).execute()
 
             if result == PrePostShow.play_now_interrupt:
-                play_now = int(cm.get_state('play_now', "0"))
+                play_now = int(self.cm.get_state('play_now', "0"))
 
         self.network.set_playing()
 
         # Ensure play_now is reset before beginning playback
         if play_now:
-            cm.update_state('play_now', "0")
+            self.cm.update_state('play_now', "0")
             play_now = 0
 
         # setup audio file and output device
@@ -885,7 +895,7 @@ class Lightshow(object):
         row = 0
         data = self.music_file.readframes(self.chunk_size)
 
-        if args.createcache:
+        if self.createcache:
             total_frames = self.music_file.getnframes() / 100
 
             counter = 0
@@ -923,7 +933,7 @@ class Lightshow(object):
 
             # Control lights with cached timing values if they exist
             matrix = None
-            if self.cache_found and args.readcache:
+            if self.cache_found and self.readcache:
                 if row < len(self.cache_matrix):
                     matrix = self.cache_matrix[row]
                 else:
@@ -948,24 +958,25 @@ class Lightshow(object):
             row += 1
 
             # Load new application state in case we've been interrupted
-            cm.load_state()
-            play_now = int(cm.get_state('play_now', "0"))
+            self.cm.load_state()
+            play_now = int(self.cm.get_state('play_now', "0"))
 
         if not self.cache_found and not play_now:
             self.save_cache()
 
         # Cleanup the pifm process
-        if cm.fm.enabled:
+        if self.cm.fm.enabled:
             self.fm_process.kill()
 
         # check for postshow
         self.network.unset_playing()
 
         if not play_now:
-            PrePostShow('postshow', hc).execute()
+            PrePostShow('postshow', self.hc).execute()
 
         # We're done, turn it all off and clean up things ;)
-        hc.clean_up()
+        self.hc.clean_up()
+        print('End of play_song')
 
     def network_client(self):
         """Network client support
@@ -977,7 +988,7 @@ class Lightshow(object):
         print("Network client mode starting...")
         print("press CTRL<C> to end")
 
-        hc.initialize()
+        self.hc.initialize()
 
         print
 
@@ -988,14 +999,14 @@ class Lightshow(object):
             while True:
                 data = self.network.receive()
 
-                if hc.led and isinstance(data[0], np.ndarray):
-                    for led_instance in hc.led:
+                if self.hc.led and isinstance(data[0], np.ndarray):
+                    for led_instance in self.hc.led:
                         led_instance.write_all(data[0])
 
                 if isinstance(data[0], int):
                     pin = data[0]
                     if pin in channel_keys:
-                        hc.set_light(channels[pin], True, float(data[1]))
+                        self.hc.set_light(channels[pin], True, float(data[1]))
                     continue
 
                 elif isinstance(data[0], np.ndarray):
@@ -1005,14 +1016,14 @@ class Lightshow(object):
                     continue
 
                 for pin in channel_keys:
-                    hc.set_light(channels[pin], True, brightness_levels[pin])
+                    self.hc.set_light(channels[pin], True, brightness_levels[pin])
 
         except KeyboardInterrupt:
             log.info("CTRL<C> pressed, stopping")
             print("stopping")
 
             self.network.close_connection()
-            hc.clean_up()
+            self.hc.clean_up()
 
     def launch_curses(self, screen):
         self.terminal.init(screen)
@@ -1025,22 +1036,52 @@ class Lightshow(object):
 
 if __name__ == "__main__":
 
-    if args.log:
-        level = levels.get(args.log.upper())
-    elif cm.lightshow.log_level != "":
-        level = levels.get(cm.lightshow.log_level.upper())
-    else:
-        level = levels.get('INFO')
-    log.getLogger().setLevel(level)
+    # Remove traceback on Ctrl-C
+    signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
+    signal.signal(signal.SIGTERM, lambda x, y: sys.exit(0))
+
+    # Arguments
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--log', default=None,
+                        help='Set the logging level. levels:INFO, DEBUG, WARNING, ERROR, CRITICAL')
+    parser.add_argument('--config', default=None, help='Config File Override')
+
+    file_group = parser.add_mutually_exclusive_group()
+    file_group.add_argument('--playlist', default=None,
+                            help='Playlist to choose song from.')
+    file_group.add_argument('--file', help='path to the song to play (required if no '
+                                        'playlist is designated)')
+
+    cache_group = parser.add_mutually_exclusive_group()
+    cache_group.add_argument('--readcache', type=bool, default=True,
+                            help='read light timing from cache if available. Default: true')
+    cache_group.add_argument('--createcache', action="store_true",
+                            help='create light timing cache without audio playback or lightshow.')
+
+    if parser.parse_args().createcache:
+        parser.set_defaults(readcache=False)
+
+    args = parser.parse_args()
+
+    lightshow = Lightshow(args=args)
+
+    if not args.playlist:
+        args.playlist=lightshow.cm.lightshow.playlist_path
 
     # Make sure one of --playlist or --file was specified
     if args.file is None and args.playlist is None:
         print("One of --playlist or --file must be specified")
         sys.exit()
 
-    lightshow = Lightshow()
+    if args.log:
+        level = levels.get(args.log.upper())
+    elif lightshow.cm.lightshow.log_level != "":
+        level = levels.get(lightshow.cm.lightshow.log_level.upper())
+    else:
+        level = levels.get('INFO')
+    log.getLogger().setLevel(level)
 
-    if "-in" in cm.lightshow.mode:
+    if "-in" in lightshow.cm.lightshow.mode:
         lightshow.audio_in()
 
     elif lightshow.client:

@@ -52,12 +52,11 @@ def exit_function():
             time.sleep(3)
             hc.turn_off_lights()
 
+    atexit.register(exit_function)
 
-atexit.register(exit_function)
-
-# Remove traceback on Ctrl-C
-#signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
-signal.signal(signal.SIGINT, signal.SIG_IGN)
+    # Remove traceback on Ctrl-C
+    #signal.signal(signal.SIGINT, lambda x, y: sys.exit(0))
+    signal.signal(signal.SIGINT, signal.SIG_IGN)
 
 # Test if running on a RaspberryPi
 is_a_raspberryPI = Platform.platform_detect() == 1
