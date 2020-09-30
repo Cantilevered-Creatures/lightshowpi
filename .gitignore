@@ -5,6 +5,7 @@ fileinfo.py
 # Ignore install log file + build_dir
 build_dir
 install.log
+logs/now_playing.txt
 
 # Ignore all compiled python files
 *.pyc
