@@ -65,21 +65,21 @@ class lspi_color_maps:
                          [colors.Blue for g in range(250)]
 ,
 'HALLOWEEN': [colors.DarkOrange for g in range(5)] + \
-                         [colors.DarkViolet for g in range(15)] + \
+                         [colors.Gold for g in range(15)] + \
                          [colors.DarkOrange for g in range(31)] + \
-                         [colors.DarkViolet for g in range(47)] + \
+                         [colors.Gold for g in range(47)] + \
                          [colors.DarkOrange for g in range(63)] + \
-                         [colors.DarkViolet for g in range(79)] + \
+                         [colors.Gold for g in range(79)] + \
                          [colors.DarkOrange for g in range(95)] + \
-                         [colors.DarkViolet for g in range(111)] + \
+                         [colors.Gold for g in range(111)] + \
                          [colors.DarkOrange for g in range(127)] + \
-                         [colors.DarkViolet for g in range(143)] + \
+                         [colors.Gold for g in range(143)] + \
                          [colors.DarkOrange for g in range(159)] + \
-                         [colors.DarkViolet for g in range(175)] + \
+                         [colors.Gold for g in range(175)] + \
                          [colors.DarkOrange for g in range(191)] + \
-                         [colors.DarkViolet for g in range(207)] + \
+                         [colors.Gold for g in range(207)] + \
                          [colors.DarkOrange for g in range(223)] + \
-                         [colors.DarkViolet for g in range(239)] + \
+                         [colors.Gold for g in range(239)] + \
                          [colors.DarkOrange for g in range(250)]
 ,
 'EASTER': [colors.Fuchsia for g in range(5)] + \
