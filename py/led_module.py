@@ -33,6 +33,7 @@ from bibliopixel.drivers.driver_base import *
 from bibliopixel.drivers.serial import Serial
 from bibliopixel.drivers.serial.devices import Devices
 from bibliopixel.drivers.SPI import SPI
+from bibliopixel.drivers.WS281X import *
 from driver_sacn import DriverSACN
 from led_color_maps import lspi_color_maps
 
@@ -98,6 +99,8 @@ class Led(object):
             self.serial_setup()
         elif self.led_config.led_connection == "SACN":
             self.sacn_setup()
+        elif self.led_config.led_connection == "WS281X":
+            self.ws281x_setup()
 
         if self.led_config.led_configuration == "STRIP":
             self.led = LEDStrip(self.driver,threadedUpdate=self.led_config.multiprocess)
@@ -124,6 +127,11 @@ class Led(object):
         self.driver = SPI(ledtype=self.led_config.strip_type,
                              num=self.led_count,
                              spi_interface='PYDEV',
+                             c_order=self.channel_order)
+
+    def ws281x_setup(self):
+        self.driver = WS281XDriver(ledtype=self.led_config.strip_type,
+                             num=self.led_count,
                              c_order=self.channel_order)
 
     def serial_setup(self):
