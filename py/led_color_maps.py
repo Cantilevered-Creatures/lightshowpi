@@ -66,21 +66,21 @@ class lspi_color_maps:
 ,
 'HALLOWEEN': [colors.DarkOrange for g in range(5)] + \
                          [colors.Gold for g in range(15)] + \
-                         [colors.DarkOrange for g in range(31)] + \
+                         [colors.OrangeRed for g in range(31)] + \
                          [colors.Gold for g in range(47)] + \
-                         [colors.DarkOrange for g in range(63)] + \
+                         [colors.OrangeRed for g in range(63)] + \
                          [colors.Gold for g in range(79)] + \
-                         [colors.DarkOrange for g in range(95)] + \
+                         [colors.OrangeRed for g in range(95)] + \
                          [colors.Gold for g in range(111)] + \
-                         [colors.DarkOrange for g in range(127)] + \
+                         [colors.OrangeRed for g in range(127)] + \
                          [colors.Gold for g in range(143)] + \
-                         [colors.DarkOrange for g in range(159)] + \
+                         [colors.OrangeRed for g in range(159)] + \
                          [colors.Gold for g in range(175)] + \
-                         [colors.DarkOrange for g in range(191)] + \
+                         [colors.OrangeRed for g in range(191)] + \
                          [colors.Gold for g in range(207)] + \
-                         [colors.DarkOrange for g in range(223)] + \
-                         [colors.Gold for g in range(239)] + \
-                         [colors.DarkOrange for g in range(250)]
+                         [colors.OrangeRed for g in range(223)] + \
+                         [colors.White for g in range(239)] + \
+                         [colors.OrangeRed for g in range(250)]
 ,
 'EASTER': [colors.Fuchsia for g in range(5)] + \
                          [colors.DeepPink for g in range(15)] + \
@@ -189,7 +189,6 @@ class lspi_color_maps:
                          [colors.OrangeRed for g in range(223)] + \
                          [colors.SaddleBrown for g in range(239)] + \
                          [colors.Chocolate for g in range(250)]
-
 	}
 
 
