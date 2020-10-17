@@ -257,7 +257,7 @@ class Configuration(object):
                "TM1803", "TM1804", "TM1809", "UCS1903", "SM16716",
                "LPD1886", "P9813"]
 
-        if lconn in ["SERIAL", "SPI", "SACN"]:
+        if lconn in ["SERIAL", "SPI", "SACN", "WS281X"]:
             led["led_configuration"] = lc
             led["led_connection"] = lconn
         else:
@@ -266,7 +266,7 @@ class Configuration(object):
 
         if st in sst[0:5] and lconn == "SPI":
             led["strip_type"] = st
-        elif lconn in ["SERIAL"] and st in sst:
+        elif lconn in ["SERIAL", "WS281X"] and st in sst:
             led["strip_type"] = st
         else:
             led["strip_type"] = None
@@ -291,6 +291,8 @@ class Configuration(object):
             led["channel_order"] = c_order
         else:
             led["channel_order"] = "RGB"
+
+        led["color_channels"] = self.led_config.getint('led', 'color_channels')
 
         led_count = self.led_config.getint('led', 'led_channel_count')
 
@@ -419,7 +421,7 @@ class Configuration(object):
 
         temp = defaultdict()
         for channel in range(len(channels)):
-            temp[channels[channel]] = channel
+            temp[channel] = channels[channel]
 
         ntwrk["channels"] = temp
 

@@ -111,8 +111,8 @@ levels = {'DEBUG': log.DEBUG,
 
 # Setup log file
 log.basicConfig(filename=LOG_DIR + '/music_and_lights.play.dbg',
-                format='[%(asctime)s] %(levelname)s {%(pathname)s:%(lineno)d} - %(message)s',
-                level=log.INFO)
+                 format='[%(asctime)s] %(levelname)s {%(pathname)s:%(lineno)d} - %(message)s',
+                 level=log.INFO)
 
 # import hardware_controller
 import hardware_controller
@@ -152,6 +152,8 @@ class Lightshow(object):
                 self.filepath = args.file
             if args.createcache is not None:
                 self.createcache = args.createcache
+            if args.config is not None:
+                self.configPath = args.config
             
 
         self.output = lambda raw_data: None
@@ -994,19 +996,25 @@ class Lightshow(object):
 
         try:
             channels = self.network.channels
-            channel_keys = channels.keys()
+            channel_pins = channels.values()
 
             while True:
                 data = self.network.receive()
 
                 if self.hc.led and isinstance(data[0], np.ndarray):
+                    channel_data = np.empty(len(channels))
+                    for channel in channels.keys():
+                        channel_data[channel] = data[0][channels[channel]]
+
                     for led_instance in self.hc.led:
-                        led_instance.write_all(data[0])
+                        led_instance.write_all(channel_data)
 
                 if isinstance(data[0], int):
                     pin = data[0]
-                    if pin in channel_keys:
-                        self.hc.set_light(channels[pin], True, float(data[1]))
+                    if pin in channel_pins:
+                        # This code has not been tested as I don't have none LED setup
+                        for channel in list(filter(lambda x: x == pin, channels)):
+                            self.hc.set_light(channel, True, float(data[1]))
                     continue
 
                 elif isinstance(data[0], np.ndarray):
@@ -1015,8 +1023,8 @@ class Lightshow(object):
                 else:
                     continue
 
-                for pin in channel_keys:
-                    self.hc.set_light(channels[pin], True, brightness_levels[pin])
+                for channel in channels.keys():
+                    self.hc.set_light(channel, True, brightness_levels[channels[channel]])
 
         except KeyboardInterrupt:
             log.info("CTRL<C> pressed, stopping")

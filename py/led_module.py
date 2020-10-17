@@ -33,7 +33,7 @@ from bibliopixel.drivers.driver_base import *
 from bibliopixel.drivers.serial import Serial
 from bibliopixel.drivers.serial.devices import Devices
 from bibliopixel.drivers.SPI import SPI
-from bibliopixel.drivers.WS281X import *
+from bibliopixel.drivers.PiWS281X import *
 from driver_sacn import DriverSACN
 from led_color_maps import lspi_color_maps
 
@@ -75,6 +75,7 @@ class Led(object):
         self.pattern_color = self.led_config.pattern_color
         self.pattern_color_map = self.led_config.pattern_color_map
 
+        self.color_channels = self.led_config.color_channels
         self.channel_order = getattr(ChannelOrder, self.led_config.channel_order)
         self.last = self.led_config.led_count - 1
         self.rgb = list()
@@ -130,9 +131,9 @@ class Led(object):
                              c_order=self.channel_order)
 
     def ws281x_setup(self):
-        self.driver = WS281XDriver(ledtype=self.led_config.strip_type,
-                             num=self.led_count,
-                             c_order=self.channel_order)
+        self.driver = PiWS281X(num=self.led_count,
+                             c_order=self.channel_order,
+                             color_channels=self.color_channels)
 
     def serial_setup(self):
 
